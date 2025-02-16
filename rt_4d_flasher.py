@@ -1,10 +1,27 @@
 #!/bin/python
 
+"""
+initial sequence:
+
+ERASE_FLASH
+39 33 05 10, crc=c9
+06
+39 33 05 55, crc=0e
+06
+
+57 00 00 <data> <crc>
+57 04 00 <data> <crc>
+...
+57 50 00 <last_data_block> <crc>
+57 54 00 <zeroes> <crc>
+...
+57 d4 00 <zeroes> <crc>
+"""
+
 import sys
 import argparse
 
 import serial  # type: ignore[import-untyped]
-
 
 class RT4DFlasher:
     ACK_RESPONSE = b'\06'
