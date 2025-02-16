@@ -1,13 +1,16 @@
 #!/bin/python
 
 """
-initial sequence:
+Sequence:
 
 ERASE_FLASH
-39 33 05 10, crc=c9
-06
-39 33 05 55, crc=0e
-06
+
+- 39 33 05 10, crc=c9
+- 06 (ACK)
+- 39 33 05 55, crc=0e
+- 06
+
+WRITE_FLASH (ACK after each block transferred)
 
 57 00 00 <data> <crc>
 57 04 00 <data> <crc>
