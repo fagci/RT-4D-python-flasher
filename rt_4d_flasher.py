@@ -6,18 +6,18 @@ import argparse
 import serial  # type: ignore[import-untyped]
 
 
-class RT890Flasher:
-    ACK_RESPONSE = 0x06.to_bytes()
+class RT4DFlasher:
+    ACK_RESPONSE = b'\06'
     FLASH_MODE_RESPONSE = 0xFF
     CMD_ERASE_FLASH = 0x39
     CMD_READ_FLASH = 0x52
     CMD_WRITE_FLASH = 0x57
-    WRITE_BLOCK_SIZE = 0x80
-    MEMORY_SIZE = 0xEC00
+    WRITE_BLOCK_SIZE = 0x400
+    MEMORY_SIZE = 0#0xEC00 # TODO: get exact size
 
     @classmethod
     def append_checksum(cls, data):
-        data.append(sum(data) % 256)
+        data.append((sum(data) + 72) % 256)
         return bytearray(data)
 
     def __init__(self, serial_port, verbosity=1):
@@ -185,10 +185,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "A tool for programming RT-890 (and clones) firmware.\nFirst, "
-            "put your radio on programming mode by turning it on while pressing both Side-Keys."
+            "A tool for programming RT-4D (and clones) firmware.\nFirst, "
+            "put your radio on programming mode by turning it on while pressing PTT."
         ),
-        epilog="RT-890 Firmware Programmer (c) 2023 JuantAldea (https://github.com/JuantAldea)",
     )
 
     parser.add_argument("serial_port", help="serial port where the radio is connected.")
@@ -208,7 +207,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    with RT890Flasher(args.serial_port, args.verbose) as flasher:
+    with RT4DFlasher(args.serial_port, args.verbose) as flasher:
         with open(args.firmware_file, "rb") as file:
             fw = file.read()
 
@@ -218,8 +217,10 @@ if __name__ == "__main__":
         if not flasher.check_bootloader_mode():
             sys.exit("\nFAILED: Radio not on flashing mode, or not connected.")
 
+        """
         if not flasher.cmd_erase_flash():
             sys.exit("\nFAILED: Could not erase radio memory.")
+
 
         flashed_bytes, added_padding = flasher.flash_firmware(fw)
         padded_fw_size = fw_len + added_padding
@@ -227,7 +228,7 @@ if __name__ == "__main__":
             sys.exit(
                 (
                     "\nFAILED: The amount of bytes written does not match the "
-                    f"FW size padded to 0x80. "
+                    f"FW size padded to 0x{WRITE_BLOCK_SIZE:02x}. "
                     f"Expected {padded_fw_size} (0x{padded_fw_size:04X}) bytes, "
                     f"wrote: {flashed_bytes} (0x{flashed_bytes:04X})."
                 )
@@ -235,10 +236,11 @@ if __name__ == "__main__":
 
         print("\nAll OK!")
 
-        if flashed_bytes != RT890Flasher.MEMORY_SIZE:
+        if flashed_bytes != RT4DFlasher.MEMORY_SIZE:
             NOTE_STR = (
                 "# Note: The FW does not fill the whole memory."
                 " The radio will not restart automatically. #"
             )
             FRAME = "#" * len(NOTE_STR)
             print(f"{FRAME}\n{NOTE_STR}\n{FRAME}")
+        """
