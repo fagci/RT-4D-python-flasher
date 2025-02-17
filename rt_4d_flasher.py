@@ -1,95 +1,44 @@
 #!/bin/python
 
-"""
-Sequence:
-
-ERASE_FLASH
-
-- 39 33 05 10, crc=c9
-- 06 (ACK)
-- 39 33 05 55, crc=0e
-- 06
-
-WRITE_FLASH (ACK after each block transferred)
-
-57 00 00 <data> <crc>
-57 04 00 <data> <crc>
-...
-57 50 00 <last_data_block> <crc>
-57 54 00 <zeroes> <crc>
-...
-57 d4 00 <zeroes> <crc>
-"""
-
 import sys
 import argparse
 
-import serial  # type: ignore[import-untyped]
+from serial import Serial
 
-class RT4DFlasher:
+class RT4DFlasher(Serial):
     ACK_RESPONSE = b'\06'
     FLASH_MODE_RESPONSE = 0xFF
     CMD_ERASE_FLASH = 0x39
     CMD_READ_FLASH = 0x52
     CMD_WRITE_FLASH = 0x57
     WRITE_BLOCK_SIZE = 0x400
-    MEMORY_SIZE = 0x3d800 #0x10000*3 + 0xd800 #0xEC00 # TODO: get exact size
+    MEMORY_SIZE = 0x3d800
 
     @classmethod
     def append_checksum(cls, data):
         data.append((sum(data) + 72) % 256)
         return bytearray(data)
 
-    def __init__(self, serial_port, verbosity=1):
-        try:
-            self.port = serial.Serial(
-                port=serial_port,
-                baudrate=115200,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                bytesize=serial.EIGHTBITS,
-                write_timeout=5000,
-                timeout=5,
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            sys.exit(e)
-
-        self.verbosity = verbosity
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exception_type, exception_value, exception_traceback):
-        if exception_value:
-            print(exception_value, file=sys.stderr)
-            return True
-
-        self.close()
-        return None
-
-    def close(self):
-        self.port.close()
-
     def check_bootloader_mode(self):
         # discard any leftovers
-        while self.port.in_waiting:
-            self.port.read()
+        while self.in_waiting:
+            self.read()
 
         payload = [self.CMD_READ_FLASH, 0, 0]
         payload = self.append_checksum(payload)
 
         print(f"CMD Read:\n{hexdump(payload, 32)}")
 
-        self.port.write(payload)
+        self.write(payload)
 
-        data_read = bytearray(self.port.read(4))
+        data_read = bytearray(self.read(4))
 
         # empty the input buffer, should be empty already
         # though, and maybe recover from a timeout
 
         for _i in range(8):
-            while self.port.in_waiting:
-                data_read += bytearray(self.port.read())
+            while self.in_waiting:
+                data_read += bytearray(self.read())
 
         if not data_read:
             return False
@@ -108,11 +57,8 @@ class RT4DFlasher:
 
         print(f"CMD Erase:\n{hexdump(payload, 32)}")
 
-        self.port.write(payload)
-        response = self.port.read(1)
-        for _i in range(8):
-            while self.port.in_waiting:
-                self.port.read()
+        self.write(payload)
+        response = self.read(1)
 
         if not response:
             return False
@@ -137,17 +83,13 @@ class RT4DFlasher:
         payload = [self.CMD_WRITE_FLASH, (offset >> 8) & 0xFF, (offset >> 0) & 0xFF]
         payload += bytes_128
         payload = self.append_checksum(payload)
-        # print(f"CMD Write:\n{hexdump(payload, len(payload))}")
         print(f"{payload[0]:02x} {payload[1]:02x} {payload[2]:02x} | {payload[3]:02x} {payload[4]:02x} ... {payload[-3]:02x} {payload[-2]:02x} => {payload[-1]:02x}")
 
-        self.port.write(payload)
-        response = self.port.read(1)
+        self.write(payload)
+        response = self.read(1)
 
         if not response:
             return False
-
-        if self.verbosity > 0:
-            print(f"Writting at 0x{offset:04X} response:\n{hexdump(response, 32)}")
 
         return response == self.ACK_RESPONSE
 
@@ -170,12 +112,6 @@ class RT4DFlasher:
 
         total_bytes = 0
         for chunk in chunks:
-            if self.verbosity > 0:
-                print(f"\nBytes at 0x{chunk[0]:04X}:")
-
-            if self.verbosity > 0:
-                print(hexdump(chunk[1], 32))
-
             ok = self.cmd_write_flash(*chunk)
 
             print(
@@ -199,11 +135,6 @@ def hexdump(byte_array, step):
     dump = [byte_array[off : off + step] for off in range(0, len(byte_array), step)]
     dump = [" ".join([f"{byte:02X}" for byte in _bytes]) for _bytes in dump]
     dump = [f"{off * step:03X} | {_bytes}" for off, _bytes in enumerate(dump)]
-    """
-    header = (
-        f"Off | {' '.join([f'{i:02X}' for i in range(min(step, len(byte_array)))])}"
-    )
-    """
     header = ''
 
     separator = ["="] * len(dump[0])
@@ -226,14 +157,6 @@ if __name__ == "__main__":
 
     parser.add_argument("serial_port", help="serial port where the radio is connected.")
     parser.add_argument("firmware_file", help="file containing the firmware.")
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        help="set verbose output",
-        action="store_true",
-        dest="verbose",
-        default=False,
-    )
 
     if len(sys.argv) < 2:
         parser.print_help()
@@ -241,7 +164,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    with RT4DFlasher(args.serial_port, args.verbose) as flasher:
+    with RT4DFlasher(args.serial_port, 115200, write_timeout=5000, timeout=5) as flasher:
         with open(args.firmware_file, "rb") as file:
             fw = file.read()
 
