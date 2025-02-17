@@ -33,7 +33,7 @@ class RT4DFlasher:
     CMD_READ_FLASH = 0x52
     CMD_WRITE_FLASH = 0x57
     WRITE_BLOCK_SIZE = 0x400
-    MEMORY_SIZE = 0#0xEC00 # TODO: get exact size
+    MEMORY_SIZE = 0x3d800 #0x10000*3 + 0xd800 #0xEC00 # TODO: get exact size
 
     @classmethod
     def append_checksum(cls, data):
@@ -48,8 +48,8 @@ class RT4DFlasher:
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
-                write_timeout=2000,
-                timeout=3,
+                write_timeout=5000,
+                timeout=5,
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
             sys.exit(e)
@@ -98,14 +98,21 @@ class RT4DFlasher:
 
         return data_read[0] == self.FLASH_MODE_RESPONSE
 
-    def cmd_erase_flash(self):
-        payload = [self.CMD_ERASE_FLASH, 0, 0, 0x55]
+    def _cmd_erase_flash(self, part):
+        if part == 0:
+            payload = [self.CMD_ERASE_FLASH, 0x33, 0x05, 0x10]
+        else:
+            payload = [self.CMD_ERASE_FLASH, 0x33, 0x05, 0x55]
+
         payload = self.append_checksum(payload)
 
         print(f"CMD Erase:\n{hexdump(payload, 32)}")
 
         self.port.write(payload)
         response = self.port.read(1)
+        for _i in range(8):
+            while self.port.in_waiting:
+                self.port.read()
 
         if not response:
             return False
@@ -113,6 +120,10 @@ class RT4DFlasher:
         print(f"Response:\n{hexdump(response, 32)}")
 
         return response == self.ACK_RESPONSE
+
+    def cmd_erase_flash(self):
+        return self._cmd_erase_flash(0) and self._cmd_erase_flash(1)
+
 
     def cmd_write_flash(self, offset, bytes_128):
         if len(bytes_128) != self.WRITE_BLOCK_SIZE:
@@ -126,6 +137,8 @@ class RT4DFlasher:
         payload = [self.CMD_WRITE_FLASH, (offset >> 8) & 0xFF, (offset >> 0) & 0xFF]
         payload += bytes_128
         payload = self.append_checksum(payload)
+        # print(f"CMD Write:\n{hexdump(payload, len(payload))}")
+        print(f"{payload[0]:02x} {payload[1]:02x} {payload[2]:02x} | {payload[3]:02x} {payload[4]:02x} ... {payload[-3]:02x} {payload[-2]:02x} => {payload[-1]:02x}")
 
         self.port.write(payload)
         response = self.port.read(1)
@@ -139,21 +152,20 @@ class RT4DFlasher:
         return response == self.ACK_RESPONSE
 
     def flash_firmware(self, fw_bytes):
-        last_chunk_size = len(fw_bytes) % self.WRITE_BLOCK_SIZE
         padding_to_add = (
-            self.WRITE_BLOCK_SIZE - last_chunk_size if last_chunk_size else 0
+            self.MEMORY_SIZE - len(fw_bytes) if len(fw_bytes) else 0
         )
 
         if padding_to_add:
             print(
-                f"Note: Padding with {padding_to_add} ZERO-bytes to align the FW to 0x80 bytes."
+                f"Note: Padding with {padding_to_add} ZERO-bytes to align the FW to {self.WRITE_BLOCK_SIZE:02x} bytes."
             )
 
             fw_bytes += bytearray([0x0] * padding_to_add)
 
         chunks = [
             [offset, fw_bytes[offset : offset + self.WRITE_BLOCK_SIZE]]
-            for offset in range(0, len(fw_bytes), self.WRITE_BLOCK_SIZE)
+            for offset in range(0, self.MEMORY_SIZE, self.WRITE_BLOCK_SIZE)
         ]
 
         total_bytes = 0
@@ -187,10 +199,12 @@ def hexdump(byte_array, step):
     dump = [byte_array[off : off + step] for off in range(0, len(byte_array), step)]
     dump = [" ".join([f"{byte:02X}" for byte in _bytes]) for _bytes in dump]
     dump = [f"{off * step:03X} | {_bytes}" for off, _bytes in enumerate(dump)]
-
+    """
     header = (
         f"Off | {' '.join([f'{i:02X}' for i in range(min(step, len(byte_array)))])}"
     )
+    """
+    header = ''
 
     separator = ["="] * len(dump[0])
     separator[4] = "|"
@@ -237,7 +251,6 @@ if __name__ == "__main__":
         if not flasher.check_bootloader_mode():
             sys.exit("\nFAILED: Radio not on flashing mode, or not connected.")
 
-        """
         if not flasher.cmd_erase_flash():
             sys.exit("\nFAILED: Could not erase radio memory.")
 
@@ -263,4 +276,3 @@ if __name__ == "__main__":
             )
             FRAME = "#" * len(NOTE_STR)
             print(f"{FRAME}\n{NOTE_STR}\n{FRAME}")
-        """
