@@ -5,7 +5,7 @@ import argparse
 
 from serial import Serial
 
-class RT4DFlasher(Serial):
+class RT4D(Serial):
     ACK_RESPONSE = b'\06'
     FLASH_MODE_RESPONSE = 0xFF
     CMD_ERASE_FLASH = 0x39
@@ -38,8 +38,7 @@ class RT4DFlasher(Serial):
         payload = [self.CMD_ERASE_FLASH, 0x33, 0x05, 0x10 if part == 0 else 0x55]
         payload = self.append_checksum(payload)
 
-        self.write(payload)
-        return self.read(1) == self.ACK_RESPONSE
+        return self.write(payload) and self.read(1) == self.ACK_RESPONSE
 
 
     def cmd_erase_flash(self):
@@ -50,8 +49,7 @@ class RT4DFlasher(Serial):
         payload = bytearray([self.CMD_WRITE_FLASH, (offset >> 8) & 0xFF, offset & 0xFF]) + data
         payload = self.append_checksum(payload)
 
-        self.write(payload)
-        return self.read(1) == self.ACK_RESPONSE
+        return self.write(payload) and self.read(1) == self.ACK_RESPONSE
 
 
     def flash_firmware(self, fw_bytes):
@@ -74,8 +72,7 @@ class RT4DFlasher(Serial):
 
             total_bytes += len(chunk[1])
 
-        print(f"[i] Written a total of {total_bytes} (0x{total_bytes:0X}) bytes.")
-        return (total_bytes, padding_to_add)
+        return total_bytes
 
 
 if __name__ == "__main__":
@@ -90,25 +87,26 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    with RT4DFlasher(args.serial_port, 115200, write_timeout=5000, timeout=5) as flasher:
+    with RT4D(args.serial_port, 115200, write_timeout=5000, timeout=5) as rt4d:
         with open(args.firmware_file, "rb") as file:
             fw = file.read()
 
         fw_len = len(fw)
         print(f"Firmware size {fw_len} (0x{fw_len:04X}) bytes")
 
-        if not flasher.check_bootloader_mode():
+        if not rt4d.check_bootloader_mode():
             sys.exit("\n[E] Radio not on flashing mode, or not connected.")
 
-        if not flasher.cmd_erase_flash():
+        if not rt4d.cmd_erase_flash():
             sys.exit("\n[E] Could not erase radio memory.")
 
         print('[i] Flashing...')
 
-        flashed_bytes, added_padding = flasher.flash_firmware(fw)
-        padded_fw_size = fw_len + added_padding
-        if flashed_bytes != padded_fw_size:
-            sys.exit(f"\n[E] Not all bytes are written {flashed_bytes}/{padded_fw_size}")
+        flashed_bytes  = rt4d.flash_firmware(fw)
+        if flashed_bytes != RT4D.MEMORY_SIZE:
+            sys.exit(f"\n[E] Not all bytes are written {flashed_bytes}/{RT4D.MEMORY_SIZE}")
+        else:
+            print(f"[i] Written {flashed_bytes} (0x{flashed_bytes:0X}) bytes.")
 
         print("\n[i] All OK!")
 
